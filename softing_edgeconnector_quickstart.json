@@ -1,0 +1,1835 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "AWS QuickStart Stack for Softing edgeConnector Siemens with S7 1200/1500 protocol Simulator",
+    "Parameters" : {
+        "SiteWiseMonitorCreation" : {
+            "Type" : "String",
+            "Default" : "Yes",
+            "AllowedValues" : ["Yes", "No"],
+            "Description" : "Choose 'Yes' to create SiteWise Monitor/Dashboard setup, 'No' to skip. Telemetry data will still be shown in the Asset Measurements section!"
+        }
+    },
+    "Mappings": {
+        "AWSInstanceType2Arch": {
+            "t2.micro": {
+                "Arch": "HVM64"
+            }
+        },
+        "AWSRegionArch2AMI": {
+            "eu-central-1": {
+                "HVM64": "ami-0233214e13e500f77"
+            },
+            "eu-west-1": {
+                "HVM64": "ami-d3c0c4b5"
+            },
+            "us-west-2": {
+                "HVM64": "ami-4836a428"
+            },
+            "us-east-1": {
+                "HVM64": "ami-0b33d91d"
+            }
+        }
+    },
+    "Conditions": {
+        "ValidRegion": {
+            "Fn::Or": [
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "eu-west-1"
+                    ]
+                },
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "us-west-2"
+                    ]
+                },
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "us-east-1"
+                    ]
+                },
+                {
+                    "Fn::Equals": [
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        "eu-central-1"
+                    ]
+                }
+            ]
+        },
+        "CreateSiteWiseMonitorResources" : {"Fn::Equals" : [{"Ref" : "SiteWiseMonitorCreation"}, "Yes"]}
+    },
+
+    "Resources": {
+
+        "SiteWiseMonitorFunctionRole": {
+            "Type": "AWS::IAM::Role",
+            "DependsOn": "S3Copy",
+            "Condition" : "CreateSiteWiseMonitorResources",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "root",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iotsitewise:*",
+                                        "lambda:*",
+                                        "logs:*",
+                                        "sso:*",
+                                        "iam:PassRole"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+
+        "SiteWiseMonitorFunction": {
+            "Type": "AWS::Lambda::Function",
+            "DependsOn": "S3Copy",
+            "Condition" : "CreateSiteWiseMonitorResources",
+            "Properties": {
+                "Runtime": "python3.8",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "SiteWiseMonitorFunctionRole",
+                        "Arn"
+                    ]
+                },
+                "Handler": "sitewise_monitor.lambda_handler",
+                "Timeout": 180,
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "SiteWiseLambdaBucket"
+                    },
+                    "S3Key": "sitewise_monitor_lifecycle.zip"
+                },
+                "Description": "Invoke a function during stack creation for SiteWise Monitor/Dashboard creation.",
+                "Environment": {
+                    "Variables": {
+                        "supportEmail": "info@softing.com",
+                        "sitewisemonitorrole": {
+                            "Fn::GetAtt": [
+                                "SiteWiseMonitorRole",
+                                "Arn"
+                            ]
+                        },
+                        "stackname" : { "Ref": "AWS::StackName" }
+                    }
+                }
+            }
+        },
+
+        "SiteWiseMonitorRole": {
+            "Type": "AWS::IAM::Role",
+            "DependsOn": "S3Copy",
+            "Condition" : "CreateSiteWiseMonitorResources",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "monitor.iotsitewise.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": { "Fn::Join" : [ "", [{ "Ref": "AWS::StackName" }, "SiteWiseMonitorPolicy"]] },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": {
+                                "Effect": "Allow",
+                                "Action": [
+                                    "iotsitewise:*",
+                                    "sso-directory:*",
+                                    "iam:PassRole"
+                                ],
+                                "Resource": "*"
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+
+        "SiteWiseMonitorDashboard": {
+            "Type": "Custom::SiteWiseVisualizationResources",
+            "Condition" : "CreateSiteWiseMonitorResources",
+            "DependsOn": [
+                "IoTSiteWiseAsset"
+            ],
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "SiteWiseMonitorFunction",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+
+        "SiteWiseLambdaBucket":
+        {
+            "Type": "AWS::S3::Bucket",
+            "Properties":{
+                "AccessControl": "PublicRead"
+            }
+        },
+
+        "S3Copy": {
+            "Type": "Custom::CopyToS3",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "CopyFilesToS3",
+                        "Arn"
+                    ]
+                },
+                "S3BucketName": {
+                    "Ref": "SiteWiseLambdaBucket"
+                },
+                "Urls": [
+                    "https://github.com/SoftingIndustrial/aws-quickstart/raw/main/sitewise_assetmodel_lifecycle.zip",
+                    "https://github.com/SoftingIndustrial/aws-quickstart/raw/main/sitewise_monitor_lifecycle.zip"
+                ]
+            }
+        },
+
+        "CopyFilesToS3": {
+            "Type": "AWS::Lambda::Function",
+            "DependsOn": [
+                "SiteWiseLambdaBucket"
+            ],
+            "Properties": {
+                "Handler": "index.lambda_handler",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "CopyS3LambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout": 60,
+                "Code": {
+                    "ZipFile": {
+                        "Fn::Join": [
+                            "\n",
+                            [
+                                "",
+                                "import os",
+                                "import urllib.request",
+                                "from urllib.parse import urlparse",
+                                "import json",
+                                "import boto3",
+                                "import cfnresponse",
+                                "",
+                                "print('Loading function')",
+                                "",
+                                "s3 = boto3.resource('s3')",
+                                "",
+                                "",
+                                "def save_to_local(url):",
+                                "    urlPath = urlparse(url).path",
+                                "    fileName = os.path.basename(urlPath)",
+                                "    filePath = '/tmp/' + fileName",
+                                "    urllib.request.urlretrieve(url, filePath)",
+                                "    return filePath",
+                                "",
+                                "",
+                                "def upload_to_s3(filePath, bucket):",
+                                "    fileName = os.path.basename(filePath)",
+                                "    s3.Object(bucket, fileName).put(Body=open(filePath, 'rb'))",
+                                "",
+                                "",
+                                "def delete_from_s3(filePath, bucket):",
+                                "    fileName = os.path.basename(filePath)",
+                                "    s3.Object(bucket, fileName).delete()",
+                                "",
+                                "",
+                                "def copy_to_s3(url, bucket):",
+                                "    filePath = save_to_local(url)",
+                                "    upload_to_s3(filePath, bucket)",
+                                "",
+                                "",
+                                "def lambda_handler(event, context):",
+                                "    print('Received event: ' + json.dumps(event, indent=2))",
+                                "",
+                                "    if event['RequestType'] == 'Create':",
+                                "        # get the properties set in the CloudFormation resource",
+                                "        properties = event['ResourceProperties']",
+                                "        urls = properties['Urls']",
+                                "        bucket = properties['S3BucketName']",
+                                "",
+                                "        try:",
+                                "            for url in urls:",
+                                "                copy_to_s3(url, bucket)",
+                                "",
+                                "        except Exception as e:",
+                                "            print(e)",
+                                "            cfnresponse.send(event, context, cfnresponse.FAILED, {",
+                                "                             'Response': 'Failure'})",
+                                "            return",
+                                "    if event['RequestType'] == 'Delete':",
+                                "        # get the properties set in the CloudFormation resource",
+                                "        properties = event['ResourceProperties']",
+                                "        urls = properties['Urls']",
+                                "        bucket = properties['S3BucketName']",
+                                "",
+                                "        try:",
+                                "            for url in urls:",
+                                "                delete_from_s3(url, bucket)",
+                                "",
+                                "        except Exception as e:",
+                                "            print(e)",
+                                "            cfnresponse.send(event, context, cfnresponse.FAILED, {",
+                                "                             'Response': 'Failure'})",
+                                "            return",
+                                "",
+                                "    cfnresponse.send(event, context, cfnresponse.SUCCESS,",
+                                "                     {'Response': 'Success'})"
+                            ]
+                        ]
+                    }
+                },
+                "Runtime": "python3.6"
+            }
+        },
+
+        "CopyS3LambdaExecutionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Path": "/",
+                "Policies": [
+                    {
+                        "PolicyName": "root",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:*"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "s3:PutObject",
+                                        "s3:DeleteObject"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+
+        "IoTSiteWiseAssetModelLifecycleFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Condition": "ValidRegion",
+            "DependsOn": [
+                "S3Copy"
+            ],
+            "Properties": {
+                "Description": "IoT SiteWise lambda function handling the lifecycle of asset model resources.",
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "SiteWiseLambdaBucket"
+                    },
+                    "S3Key": "sitewise_assetmodel_lifecycle.zip"
+                },
+                "Handler": "sitewise_asset_models.handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "IoTSiteWiseAssetModelLifecycleFunctionRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.7",
+                "Timeout": 900
+            }
+        },
+        "IoTSiteWiseAssetModelLifecycleFunctionRole": {
+            "Type": "AWS::IAM::Role",
+            "Condition": "ValidRegion",
+            "Properties": {
+                "Description": "Role for IoT SiteWise asset model lifecycle.",
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                },
+                "Policies": [
+                    {
+                        "PolicyName": "IoTSiteWise-AssetModelLifecycleFunction-RolePolicy",
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:CreateLogGroup"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": {
+                                        "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                                    }
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:CreateLogGroup"
+                                    ],
+                                    "Effect": "Deny",
+                                    "NotResource": {
+                                        "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                                    }
+                                },
+                                {
+                                    "Action": [
+                                        "iotsitewise:CreateAssetModel",
+                                        "iotsitewise:DescribeAssetModel",
+                                        "iotsitewise:DeleteAssetModel"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": "*"
+                                }
+                            ],
+                            "Version": "2012-10-17"
+                        }
+                    }
+                ]
+            }
+        },
+        "IoTSiteWiseAssetModelLifecycleFunctionLogGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "DependsOn": [
+                "IoTSiteWiseAssetModelLifecycleFunction"
+            ],
+            "Condition": "ValidRegion",
+            "Properties": {
+                "LogGroupName": {
+                    "Fn::Sub": "/aws/lambda/${IoTSiteWiseAssetModelLifecycleFunction}"
+                }
+            }
+        },
+        "IoTSiteWiseAssetModel": {
+            "Type": "Custom::IoTSiteWiseAssetModel",
+            "DependsOn": [
+                "IoTSiteWiseAssetModelLifecycleFunctionLogGroup"
+            ],
+            "Condition": "ValidRegion",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "IoTSiteWiseAssetModelLifecycleFunction",
+                        "Arn"
+                    ]
+                },
+                "name": { "Fn::Sub" : "${AWS::StackName}S7SimModel" },
+                "properties_to_hierarchy": {},
+                "description": "This is an asset model used in the IoT SiteWise.",
+                "properties": [
+                    {
+                        "name": "MotorSound_SineWithNoise",
+                        "dataType": "DOUBLE",
+                        "unit": "Radian",
+                        "type": {
+                            "measurement": {}
+                        }
+                    },
+                    {
+                        "name": "NumberOfProducts_IncrementalInteger",
+                        "dataType": "INTEGER",
+                        "unit": "Number",
+                        "type": {
+                            "measurement": {}
+                        }
+                    },
+                    {
+                        "name": "Torque_SawtoothInteger",
+                        "dataType": "INTEGER",
+                        "unit": "Number",
+                        "type": {
+                            "measurement": {}
+                        }
+                    },
+                    {
+                        "name": "Oxygen_RandomInteger",
+                        "dataType": "INTEGER",
+                        "unit": "Number",
+                        "type": {
+                            "measurement": {}
+                        }
+                    }
+                ],
+                "hierarchies": []
+            }
+        },
+        "IoTSiteWiseAssetLifecycleFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Condition": "ValidRegion",
+            "DependsOn": [
+                "S3Copy"
+            ],
+            "Properties": {
+                "Description": "IoT SiteWise function handling the lifecycle of asset resources.",
+                "Code": {
+                    "S3Bucket": {
+                        "Ref": "SiteWiseLambdaBucket"
+                    },
+                    "S3Key": "sitewise_assetmodel_lifecycle.zip"
+                },
+                "Handler": "sitewise_assets.handler",
+                "MemorySize": 128,
+                "Role": {
+                    "Fn::GetAtt": [
+                        "IoTSiteWiseAssetLifecycleFunctionRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.7",
+                "Timeout": 900
+            }
+        },
+        "IoTSiteWiseAssetLifecycleFunctionRole": {
+            "Type": "AWS::IAM::Role",
+            "Condition": "ValidRegion",
+            "Properties": {
+                "Description": "Role for IoT SiteWise asset lifecycle.",
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            }
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                },
+                "Policies": [
+                    {
+                        "PolicyName": { "Fn::Sub" : "${AWS::StackName}-IoTSiteWise-AssetLifecycleFunction-RolePolicy" },
+                        "PolicyDocument": {
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:CreateLogGroup"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": {
+                                        "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                                    }
+                                },
+                                {
+                                    "Action": [
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:CreateLogGroup"
+                                    ],
+                                    "Effect": "Deny",
+                                    "NotResource": {
+                                        "Fn::Sub": "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*"
+                                    }
+                                },
+                                {
+                                    "Action": [
+                                        "iotsitewise:CreateAsset",
+                                        "iotsitewise:DescribeAsset",
+                                        "iotsitewise:AssociateAssets",
+                                        "iotsitewise:DisassociateAssets",
+                                        "iotsitewise:DeleteAsset",
+                                        "iotsitewise:UpdateAssetProperty",
+                                        "iotsitewise:DescribeAssetProperty"
+                                    ],
+                                    "Effect": "Allow",
+                                    "Resource": "*"
+                                }
+                            ],
+                            "Version": "2012-10-17"
+                        }
+                    }
+                ]
+            }
+        },
+        "IoTSiteWiseAssetLifecycleFunctionLogGroup": {
+            "DependsOn": "IoTSiteWiseAssetLifecycleFunction",
+            "Type": "AWS::Logs::LogGroup",
+            "Condition": "ValidRegion",
+            "Properties": {
+                "LogGroupName": {
+                    "Fn::Sub": "/aws/lambda/${IoTSiteWiseAssetLifecycleFunction}"
+                }
+            }
+        },
+        "IoTSiteWiseAsset": {
+            "DependsOn": [
+                "IoTSiteWiseAssetLifecycleFunctionLogGroup",
+                "GreengrassGroup"
+            ],
+            "Type": "Custom::IoTSiteWiseAsset",
+            "Condition": "ValidRegion",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "IoTSiteWiseAssetLifecycleFunction",
+                        "Arn"
+                    ]
+                },
+                "name": { "Fn::Sub" : "${AWS::StackName}S7SimAsset" },
+                "model": {
+                    "Ref": "IoTSiteWiseAssetModel"
+                },
+                "asset_ids_to_associate": [],
+                "ua_item_alias_mappings" :
+                {
+                    "MotorSound_SineWithNoise":
+                    {
+                        "ua_item_alias_path": { "Fn::Join" : [ "", [{ "Ref": "AWS::StackName" }, "/S7-Sim/DataBlocks/Datatypes_All/Real" ]] },
+                        "notification_state": "ENABLED"
+                    },
+                    "NumberOfProducts_IncrementalInteger":
+                    {
+                        "ua_item_alias_path": { "Fn::Join" : [ "", [{ "Ref": "AWS::StackName" }, "/S7-Sim/DataBlocks/Datatypes_All/Integer" ]] },
+                        "notification_state": "ENABLED"
+                    },
+                    "Torque_SawtoothInteger":
+                    {
+                        "ua_item_alias_path": { "Fn::Join" : [ "", [{ "Ref": "AWS::StackName" }, "/S7-Sim/DataBlocks/Datatypes_All/SInt" ]] },
+                        "notification_state": "ENABLED"
+                    },
+                    "Oxygen_RandomInteger":
+                    {
+                        "ua_item_alias_path": { "Fn::Join" : [ "", [{ "Ref": "AWS::StackName" }, "/S7-Sim/DataBlocks/Datatypes_All/UInt" ]] },
+                        "notification_state": "ENABLED"
+                    }
+                }
+            }
+        },
+
+        "GreengrassGroup":
+        {
+            "Type": "AWS::Greengrass::Group",
+            "Properties": {
+                "Name": { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "GreengrassGroup" ]] },
+                "RoleArn": {
+                    "Fn::GetAtt": [
+                        "GreengrassGroupRole",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "GreengrassGroupVersion":
+        {
+            "Type" : "AWS::Greengrass::GroupVersion",
+            "Properties" : {
+                "GroupId": {
+                    "Fn::GetAtt": [
+                        "GreengrassGroup",
+                        "Id"
+                    ] 
+                },
+                "CoreDefinitionVersionArn":
+                {
+                    "Ref": "GreengrassCoreDefinitionVersion"
+                },
+                "ConnectorDefinitionVersionArn" :
+                {
+                    "Ref" : "GreengrassConnectorDefinitionVersion"
+                },
+                "FunctionDefinitionVersionArn" :
+                {
+                    "Ref" : "GreengrassFunctionDefinitionVersion"
+                },
+                "ResourceDefinitionVersionArn" : 
+                {
+                    "Ref" : "GreengrassSiteWiseUASecretResourceVersion"
+                }
+            }
+        },
+        "GreengrassFunctionDefinition": {
+            "Type": "AWS::Greengrass::FunctionDefinition",
+            "Properties": {
+                "Name": { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "GreengrassFunctionDefinition" ]] }
+            }
+        },
+        "GreengrassFunctionDefinitionVersion" : {
+            "Type" : "AWS::Greengrass::FunctionDefinitionVersion",
+            "Properties" : {
+                "FunctionDefinitionId" : { "Fn::GetAtt": [
+                    "GreengrassFunctionDefinition",
+                    "Id"
+                ] },
+                "DefaultConfig": {
+                    "Execution": {
+                        "IsolationMode": "NoContainer"
+                    }
+                },
+                "Functions" : [ 
+                    {
+                        "FunctionArn": "arn:aws:lambda:::function:GGStreamManager:1",
+                        "Id": "StreamManagerFunctionDefinition",
+                        "FunctionConfiguration":
+                        {
+                            "Pinned": true,
+                            "Timeout": 5
+                        }
+                    },
+                    {
+                        "FunctionArn": "arn:aws:lambda:::function:GGIPDetector:1",
+                        "Id": "AutomaticIPDetectionFunction",
+                        "FunctionConfiguration":
+                        {
+                            "Pinned": true,
+                            "Timeout": 5
+                        }
+                    }
+                ]
+            }
+        },
+        "GreengrassConnectorDefinition": {
+            "Type": "AWS::Greengrass::ConnectorDefinition",
+            "Properties": {
+                "Name": { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "GreengrassConnectorDefinition" ]] }
+            }
+        },
+        "GreengrassConnectorDefinitionVersion" : {
+            "Type" : "AWS::Greengrass::ConnectorDefinitionVersion",
+            "Properties" : {
+                "ConnectorDefinitionId" :  {
+                    "Ref": "GreengrassConnectorDefinition"
+                },
+                "Connectors" : [ 
+                    {
+                        "ConnectorArn" : { "Fn::Join" : [ "", [ "arn:aws:greengrass:", { "Ref": "AWS::Region" }, "::/connectors/IoTSiteWise/versions/6" ] ] },
+                        "Id" : { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "IoTSiteWiseConnector" ] ] },
+                        "Parameters": {
+                            "AWSSecretsArnList" : { "Fn::Join" : [ "", [ "[\"", { "Ref": "GreengrassSiteWiseUASecretPassword" }, "\"]" ]] }
+                        }
+                    }
+                ]
+            }
+        },
+        "GreengrassSiteWiseUASecretPassword": {
+            "Type": "AWS::SecretsManager::Secret",
+            "Properties": {
+                "Name": { "Fn::Join" : [ "", ["greengrass-", { "Ref": "AWS::StackName" }, "_edgeConnectorEndpointCredentials" ]] },
+                "Description": "Password for the edgeConnector Siemens Simulator endpoint, used by SiteWise",
+                "SecretString": "{\"username\":\"admin\",\"password\":\"admin\"}"
+            }
+        },
+        "GreengrassSiteWiseUASecretResource": {
+            "Type": "AWS::Greengrass::ResourceDefinition",
+            "Properties": {
+                "Name": { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "edgeConnectorEndpointCredentialsResource" ]] }
+            }
+        },
+        "GreengrassSiteWiseUASecretResourceVersion": {
+            "Type": "AWS::Greengrass::ResourceDefinitionVersion",
+            "Properties": {
+                "ResourceDefinitionId": {
+                    "Ref": "GreengrassSiteWiseUASecretResource"
+                },
+                "Resources": [
+                    {
+                        "Id": { "Fn::Join" : [ "_", [{ "Ref": "AWS::StackName" }, "SecretResourceId" ]] },
+                        "Name": "SecretsManagerSecretResourceData",
+                        "ResourceDataContainer": {
+                            "SecretsManagerSecretResourceData": {
+                                "ARN": {
+                                    "Ref": "GreengrassSiteWiseUASecretPassword"
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        },
+        "GreengrassGroupRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "greengrass.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}GreengrassGroupPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": "iotsitewise:BatchPutAssetPropertyValue",
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iot:*"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "secretsmanager:GetSecretValue"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "GreengrassCoreDefinition": {
+            "Type": "AWS::Greengrass::CoreDefinition",
+            "Properties": {
+                "Name": {
+                    "Fn::Join": [
+                        "_",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "Core"
+                        ]
+                    ]
+                }
+            }
+        },
+        "GreengrassCoreDefinitionVersion": {
+            "Type": "AWS::Greengrass::CoreDefinitionVersion",
+            "Properties": {
+                "CoreDefinitionId": {
+                    "Ref": "GreengrassCoreDefinition"
+                },
+                "Cores": [
+                    {
+                        "Id": {
+                            "Fn::Join": [
+                                "_",
+                                [
+                                    {
+                                        "Ref": "AWS::StackName"
+                                    },
+                                    "Core"
+                                ]
+                            ]
+                        },
+                        "ThingArn": {
+                            "Fn::Join": [
+                                ":",
+                                [
+                                    "arn:aws:iot",
+                                    {
+                                        "Ref": "AWS::Region"
+                                    },
+                                    {
+                                        "Ref": "AWS::AccountId"
+                                    },
+                                    {
+                                        "Fn::Join": [
+                                            "/",
+                                            [
+                                                "thing",
+                                                {
+                                                    "Fn::Join": [
+                                                        "_",
+                                                        [
+                                                            {
+                                                                "Ref": "AWS::StackName"
+                                                            },
+                                                            "Core"
+                                                        ]
+                                                    ]
+                                                }
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            ]
+                        },
+                        "CertificateArn": {
+                            "Fn::Join": [
+                                ":",
+                                [
+                                    "arn:aws:iot",
+                                    {
+                                        "Ref": "AWS::Region"
+                                    },
+                                    {
+                                        "Ref": "AWS::AccountId"
+                                    },
+                                    {
+                                        "Fn::Join": [
+                                            "/",
+                                            [
+                                                "cert",
+                                                {
+                                                    "Fn::GetAtt": [
+                                                        "IoTThing",
+                                                        "certificateId"
+                                                    ]
+                                                }
+                                            ]
+                                        ]
+                                    }
+                                ]
+                            ]
+                        },
+                        "SyncShadow": false
+                    }
+                ]
+            }
+        },
+        "IoTThing": {
+            "Type": "Custom::IoTThing",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "CreateThingFunction",
+                        "Arn"
+                    ]
+                },
+                "ThingName": {
+                    "Fn::Join": [
+                        "_",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "Core"
+                        ]
+                    ]
+                }
+            }
+        },
+        "CreateThingFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Create thing, certificate, and policy, return cert and private key",
+                "Handler": "index.handler",
+                "Runtime": "python3.6",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout": 60,
+                "Code": {
+                    "ZipFile": "import sys\nimport cfnresponse\nimport boto3\nfrom botocore.exceptions import ClientError\nimport json\nimport logging\nlogger = logging.getLogger()\nlogger.setLevel(logging.INFO)\n\npolicyDocument = {\n    'Version': '2012-10-17',\n    'Statement': [\n        {\n            'Effect': 'Allow',\n            'Action': 'iot:*',\n            'Resource': '*'\n        },\n        {\n            'Effect': 'Allow',\n            'Action': 'greengrass:*',\n            'Resource': '*'\n        }\n    ]\n}\n\n\ndef handler(event, context):\n    responseData = {}\n    try:\n        logger.info('Received event: {}'.format(json.dumps(event)))\n        result = cfnresponse.FAILED\n        client = boto3.client('iot')\n        thingName=event['ResourceProperties']['ThingName']\n        if event['RequestType'] == 'Create':\n            thing = client.create_thing(\n                thingName=thingName\n            )\n            response = client.create_keys_and_certificate(\n                setAsActive=True\n            )\n            certId = response['certificateId']\n            certArn = response['certificateArn']\n            certPem = response['certificatePem']\n            privateKey = response['keyPair']['PrivateKey']\n            client.create_policy(\n                policyName='{}-full-access'.format(thingName),\n                policyDocument=json.dumps(policyDocument)\n            )\n            response = client.attach_policy(\n                policyName='{}-full-access'.format(thingName),\n                target=certArn\n            )\n            response = client.attach_thing_principal(\n                thingName=thingName,\n                principal=certArn,\n            )\n            logger.info('Created thing: %s, cert: %s and policy: %s' % \n                (thingName, certId, '{}-full-access'.format(thingName)))\n            result = cfnresponse.SUCCESS\n            responseData['certificateId'] = certId\n            responseData['certificatePem'] = certPem\n            responseData['privateKey'] = privateKey\n            responseData['iotEndpoint'] = client.describe_endpoint(endpointType='iot:Data-ATS')['endpointAddress']\n        elif event['RequestType'] == 'Update':\n            logger.info('Updating thing: %s' % thingName)\n            result = cfnresponse.SUCCESS\n        elif event['RequestType'] == 'Delete':\n            logger.info('Deleting thing: %s and cert/policy' % thingName)\n            response = client.list_thing_principals(\n                thingName=thingName\n            )\n            for i in response['principals']:\n                response = client.detach_thing_principal(\n                    thingName=thingName,\n                    principal=i\n                )\n                response = client.detach_policy(\n                    policyName='{}-full-access'.format(thingName),\n                    target=i\n                )\n                response = client.update_certificate(\n                    certificateId=i.split('/')[-1],\n                    newStatus='INACTIVE'\n                )\n                response = client.delete_certificate(\n                    certificateId=i.split('/')[-1],\n                    forceDelete=True\n                )\n                response = client.delete_policy(\n                    policyName='{}-full-access'.format(thingName),\n                )\n                response = client.delete_thing(\n                    thingName=thingName\n                )\n            result = cfnresponse.SUCCESS\n    except ClientError as e:\n        logger.error('Error: {}'.format(e))\n        result = cfnresponse.FAILED\n    logger.info('Returning response of: {}, with result of: {}'.format(result, responseData))\n    sys.stdout.flush()\n    cfnresponse.send(event, context, result, responseData)\n"
+                }
+            }
+        },
+        "GroupDeploymentReset": {
+            "Type": "Custom::GroupDeploymentReset",
+            "DependsOn": "GreengrassGroup",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "GroupDeploymentResetFunction",
+                        "Arn"
+                    ]
+                },
+                "Region": {
+                    "Ref": "AWS::Region"
+                },
+                "ThingName": {
+                    "Fn::Join": [
+                        "_",
+                        [
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "Core"
+                        ]
+                    ]
+                }
+            }
+        },
+        "GroupDeploymentResetFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Resets any deployments during stack delete and manages Greengrass service role needs",
+                "Handler": "index.handler",
+                "Runtime": "python3.6",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout": 60,
+                "Environment": {
+                    "Variables": {
+                        "STACK_NAME": {
+                            "Ref": "AWS::StackName"
+                        }
+                    }
+                },
+                "Code": {
+                    "ZipFile": "import os\nimport sys\nimport json\nimport logging\nimport cfnresponse\nimport boto3\nfrom botocore.exceptions import ClientError\n\nlgr = logging.getLogger()\nlgr.setLevel(logging.INFO)\n\nc = boto3.client(\"greengrass\")\niam = boto3.client(\"iam\")\nrole_name = \"greengrass_cfn_{}_ServiceRole\".format(os.environ[\"STACK_NAME\"])\npolicy_arn = \"arn:aws:iam::aws:policy/service-role/AWSGreengrassResourceAccessRolePolicy\"\n\ndef find_group(thingName):\n    res_auth = \"\"\n    response = c.list_groups()\n    for grp in response[\"Groups\"]:\n        thingfound = False\n        group_version = c.get_group_version(\n            GroupId=grp[\"Id\"], GroupVersionId=grp[\"LatestVersion\"]\n        )\n\n        core_arn = group_version[\"Definition\"].get(\"CoreDefinitionVersionArn\", \"\")\n        if core_arn:\n            core_id = core_arn[\n                core_arn.index(\"/cores/\") + 7 : core_arn.index(\"/versions/\")\n            ]\n            core_version_id = core_arn[\n                core_arn.index(\"/versions/\") + 10 : len(core_arn)\n            ]\n            thingfound = False\n            response_core_version = c.get_core_definition_version(\n                CoreDefinitionId=core_id, CoreDefinitionVersionId=core_version_id\n            )\n            if \"Cores\" in response_core_version[\"Definition\"]:\n                for thing_arn in response_core_version[\"Definition\"][\"Cores\"]:\n                    if thingName == thing_arn[\"ThingArn\"].split(\"/\")[1]:\n                        thingfound = True\n                        break\n        if thingfound:\n            lgr.info(\"found thing: %s, group id is: %s\" % (thingName, grp[\"Id\"]))\n            res_auth = grp[\"Id\"]\n            return res_auth\n\n\ndef manage_role(cmd):\n    if cmd == \"CREATE\":\n        r = iam.create_role(\n            RoleName=role_name,\n            AssumeRolePolicyDocument='{\"Version\": \"2012-10-17\",\"Statement\": [{\"Effect\": \"Allow\",\"Principal\": {\"Service\": \"greengrass.amazonaws.com\"},\"Action\": \"sts:AssumeRole\"}]}',\n            Description=\"CFN blog post\",\n        )\n        role_arn = r[\"Role\"][\"Arn\"]\n        iam.attach_role_policy(\n            RoleName=role_name,\n            PolicyArn=policy_arn,\n        )\n        c.associate_service_role_to_account(RoleArn=role_arn)\n        lgr.info(\"Created/assoc role {}\".format(role_name))\n    else:\n        try:\n            r = iam.get_role(RoleName=role_name)\n            role_arn = r[\"Role\"][\"Arn\"]\n            c.disassociate_service_role_from_account()\n            iam.detach_role_policy(\n                RoleName=role_name,\n                PolicyArn=policy_arn,\n            )\n            iam.delete_role(RoleName=role_name)\n            lgr.info(\"Deleted service role {}\".format(role_name))\n        except ClientError as e:\n            lgr.error(\"No service role to delete: %s\" % e)\n            return True\n    return True\n\ndef handler(event, context):\n    responseData = {}\n    try:\n        lgr.info(\"Received event: {}\".format(json.dumps(event)))\n        res = cfnresponse.FAILED\n        thingName = event[\"ResourceProperties\"][\"ThingName\"]\n        if event[\"RequestType\"] == \"Create\":\n            try:\n                c.get_service_role_for_account()\n                res = cfnresponse.SUCCESS\n            except ClientError as e:\n                manage_role(\"CREATE\")\n                lgr.info(\"GG service role created\")\n                res = cfnresponse.SUCCESS\n        elif event[\"RequestType\"] == \"Delete\":\n            gid = find_group(thingName)\n            lgr.info(\"Group id to delete: %s\" % gid)\n            if gid:\n                c.reset_deployments(Force=True, GroupId=gid)\n                lgr.info(\"Forced reset of deployment\")\n                if manage_role(\"DELETE\"):\n                    res = cfnresponse.SUCCESS\n                    lgr.info(\"Service role deleted\")\n            else:\n                lgr.error(\"No group: %s found\" % thingName)\n    except ClientError as e:\n        lgr.error(\"Error: %s\" % e)\n        res = cfnresponse.FAILED\n    lgr.info(\"Response of: %s, with result of: %s\" % (res, responseData))\n    sys.stdout.flush()\n    cfnresponse.send(event, context, res, responseData)\n"
+                }
+            }
+        },
+        "LambdaExecutionRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "lambda.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}LambdaExecutionPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents"
+                                    ],
+                                    "Resource": "arn:aws:logs:*:*:*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iot:*"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "greengrass:*"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ec2:DescribeReservedInstancesOfferings"
+                                    ],
+                                    "Resource": "*"
+                                },
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iam:CreateRole",
+                                        "iam:AttachRolePolicy",
+                                        "iam:DetachRolePolicy",
+                                        "iam:GetRole",
+                                        "iam:DeleteRole",
+                                        "iam:PassRole"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Join": [
+                                            "",
+                                            [
+                                                "arn:aws:iam::",
+                                                {
+                                                    "Ref": "AWS::AccountId"
+                                                },
+                                                ":role/greengrass_cfn_",
+                                                {
+                                                    "Ref": "AWS::StackName"
+                                                },
+                                                "_ServiceRole"
+                                            ]
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "VPC": {
+            "Type": "AWS::EC2::VPC",
+            "Properties": {
+                "CidrBlock": "10.0.0.0/16",
+                "EnableDnsSupport": true,
+                "EnableDnsHostnames": true
+            }
+        },
+        "PublicSubnet": {
+            "Type": "AWS::EC2::Subnet",
+            "Properties": {
+                "AvailabilityZone": {
+                    "Fn::GetAtt": [
+                        "InstanceAZ",
+                        "AvailabilityZone"
+                    ]
+                },
+                "CidrBlock": "10.0.0.0/24",
+                "MapPublicIpOnLaunch": true,
+                "VpcId": {
+                    "Ref": "VPC"
+                }
+            }
+        },
+
+        "InternetGateway" : {
+            "Type" : "AWS::EC2::InternetGateway"
+        },
+
+        "GatewayToInternet" : {
+            "Type" : "AWS::EC2::VPCGatewayAttachment",
+            "Properties" : {
+                "VpcId" : { "Ref" : "VPC" },
+                "InternetGatewayId" : { "Ref" : "InternetGateway" }
+            }
+        },
+
+        "PublicRouteTable" : {
+            "Type" : "AWS::EC2::RouteTable",
+            "DependsOn": "GatewayToInternet",
+            "Properties" : {
+                "VpcId" : { "Ref" : "VPC" }
+            }
+        },
+
+        "PublicRoute" : {
+            "Type" : "AWS::EC2::Route",
+            "Properties" : {
+                "RouteTableId" : { "Ref" : "PublicRouteTable" },
+                "DestinationCidrBlock" : "0.0.0.0/0",
+                "GatewayId" : { "Ref" : "InternetGateway" }
+            }
+        },
+
+        "PublicSubnetRouteTableAssociation" : {
+            "Type" : "AWS::EC2::SubnetRouteTableAssociation",
+            "Properties" : {
+                "SubnetId" : { "Ref" : "PublicSubnet" },
+                "RouteTableId" : { "Ref" : "PublicRouteTable" }
+            }
+        },
+
+        "EC2Instance": {
+            "Type": "AWS::EC2::Instance",
+            "DependsOn": [ "IoTSiteWiseAsset" ],
+            "Metadata": {
+                "AWS::CloudFormation::Init": {
+                    "configSets": {
+                        "InstallAndRun": [
+                            "Install"
+                        ]
+                    },
+                    "Install": {
+                        "files": {
+                            "/etc/cfn/cfn-hup.conf": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "[main]\n",
+                                            "stack=",
+                                            {
+                                                "Ref": "AWS::StackId"
+                                            },
+                                            "\n",
+                                            "region=",
+                                            {
+                                                "Ref": "AWS::Region"
+                                            },
+                                            "\n"
+                                        ]
+                                    ]
+                                },
+                                "mode": "000400",
+                                "owner": "root",
+                                "group": "root"
+                            },
+                            "/etc/cfn/hooks.d/cfn-auto-reloader.conf": {
+                                "content": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "[cfn-auto-reloader-hook]\n",
+                                            "triggers=post.update\n",
+                                            "path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init\n",
+                                            "action=/opt/aws/bin/cfn-init -v ",
+                                            "         --stack ",
+                                            {
+                                                "Ref": "AWS::StackName"
+                                            },
+                                            "         --resource EC2Instance ",
+                                            "         --configsets InstallAndRun ",
+                                            "         --region ",
+                                            {
+                                                "Ref": "AWS::Region"
+                                            },
+                                            "\n",
+                                            "runas=root\n"
+                                        ]
+                                    ]
+                                },
+                                "mode": "000400",
+                                "owner": "root",
+                                "group": "root"
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "InstanceType": "t2.micro",
+                "SecurityGroupIds": [
+                    {
+                        "Fn::GetAtt": [
+                            "EC2InstanceSecurityGroup",
+                            "GroupId"
+                        ]
+                    }
+                ],
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "AWSRegionArch2AMI",
+                        {
+                            "Ref": "AWS::Region"
+                        },
+                        {
+                            "Fn::FindInMap": [
+                                "AWSInstanceType2Arch",
+                                "t2.micro",
+                                "Arch"
+                            ]
+                        }
+                    ]
+                },
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash -x\n",
+
+                                "cd /home/ec2-user/\n",
+                                "mkdir -p .aws\n",
+
+                                "echo -e '[default]\\nregion = ", {"Ref": "AWS::Region" }, "\\n' > .aws/config\n",
+                                "sudo chown -R ec2-user:ec2-user .aws\n",
+
+                                "sudo yum remove -y aws-cli java*\n",
+                                "sudo yum update -y\n",
+                                "sudo yum install -y wget tree docker ecs-init java-1.8.0-openjdk\n",
+
+                                "curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"\n",
+                                "unzip awscliv2.zip 1>/dev/null\n",
+                                "sudo ./aws/install\n",
+                                "sudo ln -s /usr/local/bin/aws /usr/bin/aws\n",
+
+                                "sudo service docker start\n",
+                                "sudo usermod -a -G docker ec2-user\n",
+
+                                "sudo adduser --system ggc_user\n",
+                                "sudo groupadd --system ggc_group\n",
+
+                                "curl https://raw.githubusercontent.com/tianon/cgroupfs-mount/951c38ee8d802330454bdede20d85ec1c0f8d312/cgroupfs-mount > cgroupfs-mount.sh\n",
+                                "chmod +x cgroupfs-mount.sh\n",
+                                "sudo bash ./cgroupfs-mount.sh\n",
+
+                                "echo ECS_CLUSTER=", { "Ref": "ECSCluster" }, " | sudo tee -a /etc/ecs/ecs.config\n",
+
+                                "echo 'fs.protected_hardlinks = 1' | sudo tee -a /etc/sysctl.conf\n",
+                                "echo 'fs.protected_symlinks = 1' | sudo tee -a /etc/sysctl.conf\n",
+                                "echo 'net.ipv4.ip_forward = 1' | sudo tee -a /etc/sysctl.conf\n",
+                                "sudo sysctl -p\n",
+
+                                "wget https://d1onfpft10uf5o.cloudfront.net/greengrass-core/downloads/1.10.1/greengrass-linux-x86-64-1.10.1.tar.gz\n",
+                                "sudo tar -xvzf greengrass-linux-x86-64-1.10.1.tar.gz -C /\n",
+                                "sudo wget -O /greengrass/certs/root.ca.pem https://www.amazontrust.com/repository/AmazonRootCA1.pem\n",
+
+                                "echo -n '", { "Fn::GetAtt": [ "IoTThing", "certificatePem" ] }, "' | sudo tee -a /greengrass/certs/", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".pem\n",
+                                "echo -n '", { "Fn::GetAtt": [ "IoTThing", "privateKey" ] }, "' | sudo tee -a /greengrass/certs/", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".key\n",
+
+                                "sudo mkdir -p /var/sitewise\n",
+                                "sudo chown ggc_user /var/sitewise\n",
+                                "sudo chmod 700 /var/sitewise\n",
+
+                                "cat <<EOT > config.json\n",
+                                "{\n",
+                                "    \"coreThing\" : {\n",
+                                "      \"caPath\" : \"root.ca.pem\",\n",
+                                "      \"certPath\" : \"", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".pem\",\n",
+                                "      \"keyPath\" : \"", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".key\",\n",
+                                "      \"thingArn\" : \"arn:aws:iot:", { "Ref" : "AWS::Region" }, ":", { "Ref" : "AWS::AccountId" }, ":thing/", { "Ref" : "AWS::StackName" }, "_Core\",\n",
+                                "      \"iotHost\" : \"", { "Fn::GetAtt": [ "IoTThing", "iotEndpoint" ] }, "\",\n",
+                                "      \"ggHost\" : \"greengrass-ats.iot.", { "Ref" : "AWS::Region" }, ".amazonaws.com\"\n",
+                                "    },\n",
+                                "    \"runtime\" : {\n",
+                                "      \"cgroup\" : {\n",
+                                "         \"useSystemd\" : \"yes\"\n",
+                                "       }\n",
+                                "     },\n",
+                                "    \"managedRespawn\" : false,\n",
+                                "    \"crypto\" : {\n",
+                                "      \"principals\" : {\n",
+                                "       \"SecretsManager\" : {\n",
+                                "         \"privateKeyPath\" : \"file:///greengrass/certs/", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".key\"\n",
+                                "        },\n",
+                                "       \"IoTCertificate\" : {\n",
+                                "        \"privateKeyPath\" : \"file:///greengrass/certs/", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".key\",\n",
+                                "         \"certificatePath\" : \"file:///greengrass/certs/", { "Fn::GetAtt": [ "IoTThing", "certificateId" ] }, ".pem\"\n",
+                                "         }\n",
+                                "        },\n",
+                                "       \"caPath\" : \"file:///greengrass/certs/root.ca.pem\"\n",
+                                "    }\n",
+                                "}\n",
+                                "EOT\n",
+
+                                "sudo mv config.json /greengrass/config/\n",
+                                "sudo chown root /greengrass/config/config.json\n",
+
+                                "sudo /greengrass/ggc/core/greengrassd start\n",
+
+                                "aws iotsitewise create-gateway --gateway-name ", { "Ref" : "AWS::StackName" }, "_Gateway --gateway-platform greengrass={groupArn=" , { "Fn::GetAtt" : [ "GreengrassGroup" , "Arn" ]}, "}\n",
+                                "GateWay_ID=`aws iotsitewise list-gateways --query 'reverse(sort_by(gatewaySummaries, &creationDate))[0].gatewayId' --region ", { "Ref" : "AWS::Region" } , "` && export GateWay_ID\n",
+
+                                "cat <<EOT > gateway_config.json\n",
+                                "{\n",
+                                 "  \"sources\":\n",
+                                 "        [\n",
+                                 "            {\n",
+                                 "              \"name\":\"", { "Ref" : "AWS::StackName" },"_S7Simulator\",\n",
+                                 "              \"endpoint\": {\n",
+                                 "                \"certificateTrust\": {\n",
+                                 "                  \"type\": \"TrustAny\"\n",
+                                 "                },\n",
+                                 "                \"endpointUri\": \"", { "Fn::Join": ["", [ "opc.tcp://localhost:4897/Softing/dataFEED/Server" ] ] }, "\",\n",
+                                 "                \"securityPolicy\": \"NONE\",\n",
+                                 "                \"messageSecurityMode\": \"NONE\",\n",
+                                 "                  \"identityProvider\": {\n",
+                                 "                  \"type\": \"Username\",\n",
+                                 "                      \"usernameSecretArn\": \"", { "Ref" : "GreengrassSiteWiseUASecretPassword" }, "\"\n",
+                                 "                 },\n",
+                                 "                 \"nodeFilterRules\": [\n",
+                                 "                     {\n",
+                                 "                         \"action\": \"INCLUDE\",\n",
+                                 "                         \"definition\": {\n",
+                                 "                           \"type\": \"OpcUaRootPath\",\n",
+                                 "                           \"rootPath\": \"/S7-Sim/DataBlocks/Datatypes_All\"\n",
+                                 "                         }\n",
+                                 "                     }\n",
+                                 "                 ]\n",
+                                 "              },\n",
+                                 "             \"measurementDataStreamPrefix\": \"", { "Ref": "AWS::StackName" }, "\"\n",
+                                 "            }\n",
+                                 "        ]\n",
+                                 "}\n",
+                                 "EOT\n",
+
+                                "GroupVersion_ID=`aws greengrass list-group-versions --group-id ", { "Fn::GetAtt" : [ "GreengrassGroup" , "Id" ]} , " --query 'reverse(sort_by(Versions, &CreationTimestamp))[0].Version' --region ", { "Ref" : "AWS::Region" } , "` && export GroupVersion_ID\n",
+
+                                "aws greengrass create-deployment --deployment-type NewDeployment --group-id ", { "Fn::GetAtt" : [ "GreengrassGroup" , "Id" ]}, " --group-version-id ${GroupVersion_ID//\\\"} --region ", { "Ref" : "AWS::Region" } , "\n",
+
+                                "/opt/aws/bin/cfn-init -v ",
+                                "         --stack ", { "Ref": "AWS::StackName" },
+                                "         --resource EC2Instance ",
+                                "         --configsets InstallAndRun ",
+                                "         --region ", { "Ref": "AWS::Region" },
+                                "\n",
+
+                                "/opt/aws/bin/cfn-signal -e $? ",
+                                "         --stack ", { "Ref": "AWS::StackName" },
+                                "         --resource EC2Instance ",
+                                "         --region ", { "Ref": "AWS::Region" },
+                                "\n",
+
+                                "sudo start ecs\n",
+
+                                "sleep 10s\n",
+
+                                "aws ecs run-task --launch-type EC2 --cluster ", { "Ref": "ECSCluster" }, " --task-definition ", { "Ref" : "ECSTaskDefinition" },  " --region ", { "Ref" : "AWS::Region" } ,"\n",                           
+
+                                "sleep 5s\n",
+
+                                "aws iotsitewise update-gateway-capability-configuration --gateway-id ${GateWay_ID//\\\"} --capability-namespace \"iotsitewise:opcuacollector:1\" --capability-configuration file://gateway_config.json --region ", { "Ref" : "AWS::Region" }, "\n"
+                            ]
+                        ]
+                    }
+                },
+                "IamInstanceProfile": {
+                    "Ref": "EC2InstanceProfile"
+                },
+                "SubnetId": {
+                    "Ref": "PublicSubnet"
+                }
+            },
+            "CreationPolicy": {
+                "ResourceSignal": {
+                    "Timeout": "PT15M"
+                }
+            }
+        },
+
+        "InstanceAZ": {
+            "Type": "Custom::InstanceAZ",
+            "Properties": {
+                "ServiceToken": {
+                    "Fn::GetAtt": [
+                        "InstanceAZFunction",
+                        "Arn"
+                    ]
+                },
+                "Region": {
+                    "Ref": "AWS::Region"
+                }
+            }
+        },
+        "InstanceAZFunction": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Description": "Queries account and region for supported AZ",
+                "Handler": "index.handler",
+                "Runtime": "python3.6",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaExecutionRole",
+                        "Arn"
+                    ]
+                },
+                "Timeout": 60,
+                "Code": {
+                    "ZipFile": "import sys\nimport cfnresponse\nimport boto3\nfrom botocore.exceptions import ClientError\nimport json\nimport logging\nlogger = logging.getLogger()\nlogger.setLevel(logging.INFO)\n\nc = boto3.client('ec2')\n\n\ndef handler(event, context):\n    responseData = {}\n    try:\n        logger.info('Received event: {}'.format(json.dumps(event)))\n        result = cfnresponse.FAILED\n        if event['RequestType'] == 'Create':\n            r = c.describe_reserved_instances_offerings(\n                Filters=[\n                    {\n                        'Name': 'scope',\n                        'Values': [\n                            'Availability Zone',\n                        ]\n                    },\n                ],\n                IncludeMarketplace=False,\n                InstanceType='t2.micro',\n            )\n            x = r['ReservedInstancesOfferings']\n            while 'NextToken' in r:\n                r = c.describe_reserved_instances_offerings(\n                    Filters=[\n                        {\n                            'Name': 'scope',\n                            'Values': [\n                                'Availability Zone',\n                            ]\n                        },\n                    ],\n                    IncludeMarketplace=False,\n                    InstanceType='t2.micro',\n                    NextToken=r['NextToken']\n                )\n                x.extend(r['ReservedInstancesOfferings'])\n            responseData['AvailabilityZone'] = set(d['AvailabilityZone'] for d in x).pop()\n            result = cfnresponse.SUCCESS\n        else:\n            result = cfnresponse.SUCCESS\n    except ClientError as e:\n        logger.error('Error: {}'.format(e))\n        result = cfnresponse.FAILED\n    logger.info('Returning response of: %s, with result of: %s' % (result, responseData))\n    sys.stdout.flush()\n    cfnresponse.send(event, context, result, responseData)\n"
+                }
+            }
+        },
+        "EC2InstanceSecurityGroup": {
+            "Type": "AWS::EC2::SecurityGroup",
+            "Properties": {
+                "GroupDescription": "Enable SSH access via port 22, Greengrass/MQTT access via port 8883, edgeConnector Siemens access via port 8099 and 1443, and default UA endpoint access via 4897",
+                "VpcId":  { "Ref" : "VPC" },
+                "SecurityGroupIngress": [
+                    {
+                        "IpProtocol": "tcp",
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 22,
+                        "ToPort": 22
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 8883,
+                        "ToPort": 8883
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 1443,
+                        "ToPort": 1443
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 8099,
+                        "ToPort": 8099
+                    },
+                    {
+                        "IpProtocol": "tcp",
+                        "CidrIp": "0.0.0.0/0",
+                        "FromPort": 4897,
+                        "ToPort": 4897
+                    }
+                ],
+                "SecurityGroupEgress": [
+                    {
+                        "IpProtocol": "-1",
+                        "FromPort": -1,
+                        "ToPort": -1,
+                        "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+        "ECSService": {
+            "Type": "AWS::ECS::Service",
+            "Properties": {
+                "Cluster": {
+                    "Ref": "ECSCluster"
+                },
+                "LaunchType": "EC2",
+                "DeploymentController": {
+                    "Type": "ECS"
+                },
+                "DesiredCount": 0,
+                "TaskDefinition": {
+                    "Ref": "ECSTaskDefinition"
+                },
+                "ServiceName": {
+                    "Fn::Sub": "${AWS::StackName}ECSService"
+                }
+            }
+        },
+        "ECSCluster": {
+            "Type": "AWS::ECS::Cluster",
+            "Properties": {
+                "ClusterName": {
+                    "Fn::Sub": "${AWS::StackName}ECSCluster"
+                }
+            }
+        },
+        "ECSTaskDefinition": {
+            "Type": "AWS::ECS::TaskDefinition",
+            "Properties": {
+                "ContainerDefinitions": [
+                    {
+                        "Name": "edgeConnectorSiemens",
+                        "Image": "softingindustrial/edgeconnector-siemens:v1-20",
+                        "Cpu": 1,
+                        "Hostname": "s7sim",
+                        "PortMappings": [
+                            {
+                                "ContainerPort": 443,
+                                "HostPort": 1443
+                            },
+                            {
+                                "ContainerPort": 8099,
+                                "HostPort": 8099
+                            },
+                            {
+                                "ContainerPort": 4897,
+                                "HostPort": 4897
+                            }
+                        ],
+                        "Memory": 256,
+                        "Essential": true
+                    }
+                ]
+            }
+        },
+        "EC2InstanceProfile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Path": "/",
+                "Roles": [
+                    {
+                        "Ref": "EC2InstanceRole"
+                    }
+                ]
+            }
+        },
+        "EC2InstanceRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2008-10-17",
+                    "Statement": [
+                        {
+                            "Sid": "",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com",
+                                    "ec2.amazonaws.com",
+                                    "greengrass.amazonaws.com"
+                                ]
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "ManagedPolicyArns": [
+                    "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
+                ],
+                "Policies": [
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}GreengrassPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "greengrass:CreateConnectorDefinitionVersion",
+                                        "greengrass:ListFunctionDefinitions",
+                                        "greengrass:ListFunctionDefinitionVersions",
+                                        "greengrass:ListCoreDefinitionVersions",
+                                        "greengrass:GetCoreDefinitionVersion",
+                                        "greengrass:GetGroupVersion",
+                                        "greengrass:ListConnectorDefinitionVersions",
+                                        "greengrass:CreateGroupVersion",
+                                        "greengrass:ListDeployments",
+                                        "greengrass:ListConnectorDefinitions",
+                                        "greengrass:ListGroupVersions",
+                                        "greengrass:CreateCoreDefinition",
+                                        "greengrass:AssociateRoleToGroup",
+                                        "greengrass:CreateDeployment",
+                                        "greengrass:CreateFunctionDefinition",
+                                        "greengrass:CreateGroup",
+                                        "greengrass:CreateFunctionDefinitionVersion",
+                                        "greengrass:CreateCoreDefinitionVersion",
+                                        "greengrass:ListCoreDefinitions",
+                                        "greengrass:ListGroups",
+                                        "greengrass:CreateConnectorDefinition",
+                                        "greengrass:GetServiceRoleForAccount"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}IAMPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iam:GetRole",
+                                        "iam:PassRole",
+                                        "iam:ListRoles",
+                                        "iam:CreateRole",
+                                        "iam:PutRolePolicy"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}IoTPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iot:CreateRoleAlias",
+                                        "iot:CreateThing",
+                                        "iot:AttachPolicy",
+                                        "iot:AttachThingPrincipal",
+                                        "iot:CreatePolicy",
+                                        "iot:ListPolicies",
+                                        "iot:CreateKeysAndCertificate",
+                                        "iot:ListThings",
+                                        "iot:ListCertificates"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}ECSPolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ecs:RunTask"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "PolicyName": {
+                            "Fn::Sub": "${AWS::StackName}SiteWisePolicy"
+                        },
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Sid": "",
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "iotsitewise:CreateGateway",
+                                        "iotsitewise:ListGateways",
+                                        "iotsitewise:UpdateGatewayCapabilityConfiguration"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "InstanceId": {
+            "Description": "Id of the newly created EC2 instance",
+            "Value": {
+                "Ref": "EC2Instance"
+            }
+        },
+        "UAEndpoint": {
+            "Description": "Public default UA endpoint for access with AWS IoT SiteWise",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "opc.tcp://",
+                        {
+                            "Fn::GetAtt": [
+                                "EC2Instance",
+                                "PublicDnsName"
+                            ]
+                        },
+                        ":4897/Softing/dataFEED/Server"
+                    ]
+                ]
+            }
+        },
+        "edgeConnectorSiemens": {
+            "Description": "Public link for secure access to edgeConnectorSiemens local administrator interface",
+            "Value": {
+                "Fn::Join": [
+                    "",
+                    [
+                        "http://",
+                        {
+                            "Fn::GetAtt": [
+                                "EC2Instance",
+                                "PublicDnsName"
+                            ]
+                        },
+                        ":8099"
+                    ]
+                ]
+            }
+        },
+        "SiteWiseAsset": {
+            "Description": "AWS IoT SiteWise Asset into which data is published",
+            "Value": 
+                { "Fn::Sub" : "${AWS::StackName}S7SimAsset" }
+        }
+    }
+}
